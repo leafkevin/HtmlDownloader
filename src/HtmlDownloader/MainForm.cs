@@ -54,7 +54,7 @@ public partial class TransferForm : Form
             this.txtOutputDir.Focus();
             return;
         }
-        var downloader = new Downloader();
+        var downloader = new Downloader();       
         await downloader.Download(url, outputDir);
         MessageBox.Show("œ¬‘ÿ≥…π¶£°");
     }

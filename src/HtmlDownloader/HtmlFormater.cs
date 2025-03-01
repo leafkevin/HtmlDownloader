@@ -6,14 +6,14 @@ namespace HtmlRefactor;
 
 class HtmlFormater
 {
-    public string Transfer(string codeScripts)
+    public (string, List<string>) Transfer(string rootUrl, string codeScripts)
     {
         using var reader = new StringReader(codeScripts);
-        codeScripts = this.TrimWhiteSpace(reader);
+        (codeScripts, var resourceUrls) = this.TrimWhiteSpace(rootUrl.TrimEnd('/'), reader);
         reader.Close();
-        return codeScripts;
+        return (codeScripts, resourceUrls);
     }
-    private string TrimWhiteSpace(StringReader reader)
+    private (string, List<string>) TrimWhiteSpace(string rootUrl, StringReader reader)
     {
         var lines = new StringBuilder();
         var tagRules = new List<TagRule>
@@ -89,10 +89,13 @@ class HtmlFormater
         var ruleTags = new Stack<string>();
         TagRule myRule = null;
         int nextTagIndex = -1;
-
+        var resourceKeys = new List<string>() { "href=", "src=" };
+        var resourceUrls = new List<string>();
         while (reader.Peek() > -1)
         {
             var lineText = reader.ReadLine();
+            if (string.IsNullOrEmpty(lineText.Trim())) continue;
+
             for (int i = 0; i < lineText.Length; i++)
             {
                 var character = lineText[i].ToString();
@@ -286,12 +289,17 @@ class HtmlFormater
                     else hasCharacter = true;
                 }
             }
-            lines.AppendLine(builder.ToString());
+            lineText = builder.ToString();
+            lines.AppendLine(lineText);
             builder.Clear();
             nextTagIndex = -1;
+
+            lineText = lineText.Trim();
+            this.AddResourceUrl(lineText, rootUrl, resourceKeys, resourceUrls);
         }
-        return lines.ToString();
+        return (lines.ToString(), resourceUrls);
     }
+
     private bool IsTag(string character, List<string> tags) => tags.Contains(character);
     private bool IsTrimTag(string character, List<string> tags) => tags.Contains(character);
     private bool TryFindFirstTag(List<string> tags, string lineText, int startIndex, out string tag, out int index)
@@ -309,6 +317,40 @@ class HtmlFormater
         index = -1;
         tag = null;
         return false;
+    }
+    private void AddResourceUrl(string lineText, string rootUrl, List<string> resourceKeys, List<string> outputUrls)
+    {
+        lineText = lineText.Trim();
+        foreach (var resourceKey in resourceKeys)
+        {
+            if (!lineText.Contains(resourceKey))
+                continue;
+            var index = lineText.IndexOf(resourceKey) + resourceKey.Length;
+            var endCharacter = lineText[index];
+            var endIndex = lineText.IndexOf(endCharacter, index + 1);
+            var url = lineText.Substring(index + 1, endIndex - index - 1).Trim();
+            if (!url.Contains('/'))
+                continue;
+
+            if (url.StartsWith("/"))
+                url = Path.Combine(rootUrl, url);
+            else if (url.StartsWith("./"))
+                url = Path.Combine(rootUrl, url.Substring(2));
+            else if (url.StartsWith("../"))
+            {
+                var myRootPath = rootUrl;
+                while (url.StartsWith("../"))
+                {
+                    url = url.Substring(3);
+                    myRootPath = myRootPath.Substring(0, myRootPath.LastIndexOf('/'));
+                }
+                url = Path.Combine(myRootPath, url);
+            }
+            else if (!url.StartsWith("http:") && !url.StartsWith("https:"))
+                url = $"{rootUrl}/{url.TrimStart('/')}";
+            if (!outputUrls.Contains(url))
+                outputUrls.Add(url);
+        }
     }
     class TagRule
     {
