@@ -54,9 +54,12 @@ public partial class TransferForm : Form
             this.txtOutputDir.Focus();
             return;
         }
-        var downloader = new Downloader();       
-        await downloader.Download(url, outputDir);
-        MessageBox.Show("ÏÂÔØ³É¹¦£¡");
+        this.lbList.Items.Clear();
+        var downloader = new Downloader();
+        await downloader.Download(url, outputDir, (mssage, completedText) => this.Invoke(() =>
+        {
+            this.lbList.Items.Add(mssage);
+            this.lblProcess.Text = completedText;
+        }));
     }
 }
-

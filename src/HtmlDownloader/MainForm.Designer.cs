@@ -39,6 +39,8 @@ partial class TransferForm
         txtUrl = new TextBox();
         btnDownload = new Button();
         fbdDir = new FolderBrowserDialog();
+        lbList = new ListBox();
+        lblProcess = new Label();
         SuspendLayout();
         // 
         // txtOutputDir
@@ -69,7 +71,7 @@ partial class TransferForm
         // 
         // btnClose
         // 
-        btnClose.Location = new Point(483, 111);
+        btnClose.Location = new Point(201, 111);
         btnClose.Name = "btnClose";
         btnClose.Size = new Size(75, 28);
         btnClose.TabIndex = 4;
@@ -90,7 +92,7 @@ partial class TransferForm
         // 
         txtUrl.Location = new Point(91, 23);
         txtUrl.Name = "txtUrl";
-        txtUrl.Size = new Size(467, 23);
+        txtUrl.Size = new Size(498, 23);
         txtUrl.TabIndex = 5;
         txtUrl.Text = "https://amincods.com/html/flex-it/";
         // 
@@ -104,11 +106,31 @@ partial class TransferForm
         btnDownload.UseVisualStyleBackColor = true;
         btnDownload.Click += btnDownload_Click;
         // 
+        // lbList
+        // 
+        lbList.FormattingEnabled = true;
+        lbList.ItemHeight = 17;
+        lbList.Location = new Point(31, 203);
+        lbList.Name = "lbList";
+        lbList.Size = new Size(558, 276);
+        lbList.TabIndex = 8;
+        // 
+        // lblProcess
+        // 
+        lblProcess.AutoSize = true;
+        lblProcess.Location = new Point(31, 171);
+        lblProcess.Name = "lblProcess";
+        lblProcess.Size = new Size(68, 17);
+        lblProcess.TabIndex = 9;
+        lblProcess.Text = "下载进度：";
+        // 
         // TransferForm
         // 
         AutoScaleDimensions = new SizeF(7F, 17F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(617, 173);
+        ClientSize = new Size(617, 506);
+        Controls.Add(lblProcess);
+        Controls.Add(lbList);
         Controls.Add(btnDownload);
         Controls.Add(lblUrl);
         Controls.Add(txtUrl);
@@ -116,6 +138,7 @@ partial class TransferForm
         Controls.Add(btnBrowser);
         Controls.Add(lblSavePath);
         Controls.Add(txtOutputDir);
+        FormBorderStyle = FormBorderStyle.FixedToolWindow;
         MaximizeBox = false;
         MinimizeBox = false;
         Name = "TransferForm";
@@ -134,4 +157,6 @@ partial class TransferForm
     private TextBox txtUrl;
     private Button btnDownload;
     private FolderBrowserDialog fbdDir;
+    private ListBox lbList;
+    private Label lblProcess;
 }

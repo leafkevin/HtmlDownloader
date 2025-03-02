@@ -1,5 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,11 +10,16 @@ namespace HtmlRefactor;
 
 class Downloader
 {
-    public async Task Download(string url, string outputDir)
+    public async Task Download(string url, string outputDir, Action<string, string> completedCallback)
     {
         var filePath = Path.Combine(outputDir, "index.html");
-        (_, var resourceUrls) = await this.DownloadFile(url, filePath, true);
-        //TODO:分析页面内容，下载所有引用资源文件
+        (_, var resourceUrls) = await this.DownloadFile(true, url, url, filePath);
+        resourceUrls = resourceUrls.FindAll(f => f.Trim('/') != url.Trim('/'));
+        int total = resourceUrls.Count + 1;
+        var completedText = $"下载进度：1/{total}";
+        completedCallback.Invoke($"下载完成： {url}", completedText);
+        completedCallback.Invoke("开始下载引用资源文件", completedText);
+
         int completed = 0;
         var rootPath = url;
         if (resourceUrls != null && resourceUrls.Count > 0)
@@ -30,34 +37,81 @@ class Downloader
                 }
             }
         }
+        var rootUrl = url;
+        var newResouceUrls = new List<string>();
         foreach (var resourceUrl in resourceUrls)
         {
-            if (resourceUrl == url) continue;
-            //_ = Task.Run(async () =>
-            //{
-            var savePath = this.GetSavePath(rootPath, resourceUrl, outputDir);
-            if (string.IsNullOrEmpty(savePath)) continue;
-            await this.DownloadFile(resourceUrl, savePath);
-            Interlocked.Increment(ref completed);
-            //});
+            _ = Task.Run(async () =>
+            {
+                (var isKnown, var savePath) = this.GetSavePath(rootPath, resourceUrl, outputDir);
+                (var message, var myResouceUrls) = await this.DownloadFile(isKnown, rootUrl, resourceUrl, savePath);
+                if (isKnown && myResouceUrls != null)
+                {
+                    lock (newResouceUrls)
+                    {
+                        myResouceUrls.ForEach(f =>
+                        {
+                            if (!newResouceUrls.Contains(f))
+                                newResouceUrls.Add(f);
+                        });
+                    }
+                }
+                var completedCount = Interlocked.Increment(ref completed);
+                completedCallback.Invoke(message, $"下载进度：{completedCount + 1}/{total}");
+                if (completedCount == resourceUrls.Count)
+                {
+                    completedCallback.Invoke("引用资源文件下载完成", $"下载完成：{completedCount + 1}/{total}");
+
+                    newResouceUrls = newResouceUrls.Except(resourceUrls)
+                        .Except([url, url.TrimEnd('/')]).Distinct().ToList();
+                    newResouceUrls = newResouceUrls.FindAll(f => !f.Contains("data:image/svg+xml") && !f.Contains("data:application/"));
+                    completed = 0;
+                    total = newResouceUrls.Count;
+                    completedCallback.Invoke($"新增引引用资源文件: {total}", $"新增文件下载完成：0/{total}");
+                    foreach (var newResourceUrl in newResouceUrls)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            (isKnown, savePath) = this.GetSavePath(rootPath, newResourceUrl, outputDir);
+                            (message, myResouceUrls) = await this.DownloadFile(isKnown, rootUrl, newResourceUrl, savePath);
+                            //不再下探资源了
+                            completedCount = Interlocked.Increment(ref completed);
+                            completedCallback.Invoke(message, $"新增文件下载进度：{completedCount}/{total}");
+                            if (completedCount == total)
+                                completedCallback.Invoke("新增引用资源文件下载完成", $"新增文件下载完成：{completedCount}/{total}");
+                        });
+                    }
+                }
+            });
         }
-        SpinWait.SpinUntil(() => completed == resourceUrls.Count);
     }
-    public async Task<(string, List<string>)> DownloadFile(string url, string filePath, bool isFormat = false)
+    public async Task<(string, List<string>)> DownloadFile(bool isKnown, string rootUrl, string fileUrl, string filePath)
     {
+        var message = $"下载完成：{fileUrl}";
+        List<string> resourceUrls = null;
         using var client = new HttpClient();
-        var msgResp = await client.GetAsync(url);
-        msgResp.EnsureSuccessStatusCode();
-        this.GetFileName(url, out var isTxtFile, out var isStreamFile);
-        if (isTxtFile)
+        HttpResponseMessage msgResp = null;
+        try
+        {
+            msgResp = await client.GetAsync(fileUrl);
+            msgResp.EnsureSuccessStatusCode();
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"下载文件{fileUrl}失败，错误信息：{ex.Message}");
+            return ($"下载失败：{fileUrl}", resourceUrls);
+        }
+        var fileType = this.GetFileType(filePath, out var extName);
+        if (fileType == FileType.Text)
         {
             var codeScripts = await msgResp.Content.ReadAsStringAsync();
-            //var codeScripts = await File.ReadAllTextAsync("C:\\Users\\leafkevin\\Desktop\\index.html");
-            List<string> resourceUrls = null;
-            if (isFormat)
+            if (isKnown && extName == ".html" || extName == ".css")
             {
                 var formater = new HtmlFormater();
-                (codeScripts, resourceUrls) = formater.Transfer(url, codeScripts);
+                string url = fileUrl.Substring(0, fileUrl.LastIndexOf('/'));
+                if (extName == ".html")
+                    codeScripts = formater.Transfer(codeScripts);
+                resourceUrls = formater.GetRefResourceUrls(url, codeScripts);
             }
             using var writerStream = File.OpenWrite(filePath);
             using var writer = new StreamWriter(writerStream);
@@ -66,34 +120,19 @@ class Downloader
             writerStream.Flush();
             writer.Close();
             writerStream.Close();
-            return (codeScripts, resourceUrls);
         }
-        else if (isStreamFile)
+        else
         {
             using var writerStream = File.OpenWrite(filePath);
             await msgResp.Content.CopyToAsync(writerStream);
             writerStream.Flush();
             writerStream.Close();
         }
-        return (null, null);
+        return (message, resourceUrls);
     }
-    public string GetFileName(string url, out bool isTxtFile, out bool isStreamFile)
+    private FileType GetFileType(string filePath, out string extName)
     {
-        var extName = ".html";
-        isTxtFile = false;
-        isStreamFile = false;
-        var result = "index.html";
-        var index = url.LastIndexOf("/");
-        if (index > 0)
-        {
-            var fileName = url.Substring(index).TrimEnd('/');
-            if (!string.IsNullOrEmpty(fileName))
-            {
-                result = fileName;
-                index = fileName.LastIndexOf('.');
-                extName = fileName.Substring(index);
-            }
-        }
+        extName = Path.GetExtension(filePath);
         switch (extName)
         {
             case ".png":
@@ -113,32 +152,38 @@ class Downloader
             case ".mov":
             case ".flv":
             case ".swf":
-                isStreamFile = true;
-                break;
+                return FileType.Stream;
             case ".css":
             case ".js":
             case ".html":
-                isTxtFile = true;
-                break;
-            default:
-                break;
+            default: return FileType.Text;
         }
-        return result;
     }
-    private string GetSavePath(string rootPath, string resourceUrl, string outputRootPath)
+    private (bool, string) GetSavePath(string rootPath, string resourceUrl, string outputRootPath)
     {
+        var filePath = outputRootPath;
+        string relativePath = null;
         var index = resourceUrl.IndexOf(rootPath);
         if (index < 0)
         {
-            return null;
-            //var endIndex = resourceUrl.IndexOf('/');
-            //if (endIndex < 0) return null;
-            //endIndex = resourceUrl.IndexOf('.', endIndex + 1);
-            //if (endIndex < 0) return null;
+            //以http: https:开头的网址
+            index = resourceUrl.IndexOf("//");
+            relativePath = resourceUrl.Substring(index + 2);
+            index = relativePath.IndexOf("?");
+            if (index > 0) relativePath = relativePath.Substring(0, index);
+            relativePath = relativePath.TrimEnd('/');
+            index = relativePath.LastIndexOf('/');
+            if (index > 0)
+            {
+                filePath = relativePath.Substring(index + 1);
+                index = filePath.IndexOf('.');
+                if (index < 0) filePath += ".html";
+            }
+            else filePath = relativePath + ".html";
+            return (false, filePath);
         }
         index = index + rootPath.Length;
-        var relativePath = resourceUrl.Substring(index).TrimStart('/');
-        var filePath = outputRootPath;
+        relativePath = resourceUrl.Substring(index).TrimStart('/');
         while (relativePath.Length > 0)
         {
             var endIndex = relativePath.IndexOf('/');
@@ -153,6 +198,11 @@ class Downloader
                 Directory.CreateDirectory(filePath);
             relativePath = relativePath.Substring(endIndex + 1);
         }
-        return filePath;
+        return (true, filePath);
+    }
+    enum FileType
+    {
+        Text,
+        Stream
     }
 }

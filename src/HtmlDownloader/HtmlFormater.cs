@@ -6,14 +6,73 @@ namespace HtmlRefactor;
 
 class HtmlFormater
 {
-    public (string, List<string>) Transfer(string rootUrl, string codeScripts)
+    public string Transfer(string codeScripts)
     {
         using var reader = new StringReader(codeScripts);
-        (codeScripts, var resourceUrls) = this.TrimWhiteSpace(rootUrl.TrimEnd('/'), reader);
+        codeScripts = this.TrimWhiteSpace(reader);
         reader.Close();
-        return (codeScripts, resourceUrls);
+        return codeScripts;
     }
-    private (string, List<string>) TrimWhiteSpace(string rootUrl, StringReader reader)
+    public List<string> GetRefResourceUrls(string rootUrl, string codeScripts)
+    {
+        var resourceKeys = new List<string>() { "href=", "src=", "url(" };
+        var resourceUrls = new List<string>();
+
+        rootUrl = rootUrl.TrimEnd('/');
+        using var reader = new StringReader(codeScripts);
+        while (reader.Peek() > -1)
+        {
+            var lineText = reader.ReadLine().Trim();
+            foreach (var resourceKey in resourceKeys)
+            {
+                if (!lineText.Contains(resourceKey))
+                    continue;
+                int index = 0;
+                while (index < lineText.Length)
+                {
+                    index = lineText.IndexOf(resourceKey, index);
+                    if (index < 0) break;
+
+                    index = index + resourceKey.Length;
+                    var endCharacter = lineText[index];
+                    if (resourceKey.Contains('('))
+                        endCharacter = ')';
+                    var endIndex = lineText.IndexOf(endCharacter, index + 1);
+                    var url = lineText.Substring(index + 1, endIndex - index - 1).Trim();
+                    if (!url.Contains('/') && !url.Contains('.'))
+                    {
+                        index = endIndex + 1;
+                        continue;
+                    }
+                    url = url.Trim('"').Trim('\'');
+                    var qIndex = url.IndexOf('?');
+                    if (qIndex > 0) url = url.Substring(0, qIndex);
+
+                    if (url.StartsWith('/'))
+                        url = $"{rootUrl}/{url}";
+                    else if (url.StartsWith("./"))
+                        url = $"{rootUrl}/{url.Substring(2)}";
+                    else if (url.StartsWith("../"))
+                    {
+                        var myRootPath = rootUrl;
+                        while (url.StartsWith("../"))
+                        {
+                            url = url.Substring(3);
+                            myRootPath = myRootPath.Substring(0, myRootPath.LastIndexOf('/'));
+                        }
+                        url = $"{myRootPath}/{url}";
+                    }
+                    else if (!url.StartsWith("http:") && !url.StartsWith("https:"))
+                        url = $"{rootUrl}/{url.TrimStart('/')}";
+                    if (!resourceUrls.Contains(url))
+                        resourceUrls.Add(url);
+                    index = endIndex + 1;
+                }
+            }
+        }
+        return resourceUrls;
+    }
+    private string TrimWhiteSpace(StringReader reader)
     {
         var lines = new StringBuilder();
         var tagRules = new List<TagRule>
@@ -89,8 +148,6 @@ class HtmlFormater
         var ruleTags = new Stack<string>();
         TagRule myRule = null;
         int nextTagIndex = -1;
-        var resourceKeys = new List<string>() { "href=", "src=" };
-        var resourceUrls = new List<string>();
         while (reader.Peek() > -1)
         {
             var lineText = reader.ReadLine();
@@ -293,13 +350,9 @@ class HtmlFormater
             lines.AppendLine(lineText);
             builder.Clear();
             nextTagIndex = -1;
-
-            lineText = lineText.Trim();
-            this.AddResourceUrl(lineText, rootUrl, resourceKeys, resourceUrls);
         }
-        return (lines.ToString(), resourceUrls);
+        return lines.ToString();
     }
-
     private bool IsTag(string character, List<string> tags) => tags.Contains(character);
     private bool IsTrimTag(string character, List<string> tags) => tags.Contains(character);
     private bool TryFindFirstTag(List<string> tags, string lineText, int startIndex, out string tag, out int index)
@@ -317,40 +370,6 @@ class HtmlFormater
         index = -1;
         tag = null;
         return false;
-    }
-    private void AddResourceUrl(string lineText, string rootUrl, List<string> resourceKeys, List<string> outputUrls)
-    {
-        lineText = lineText.Trim();
-        foreach (var resourceKey in resourceKeys)
-        {
-            if (!lineText.Contains(resourceKey))
-                continue;
-            var index = lineText.IndexOf(resourceKey) + resourceKey.Length;
-            var endCharacter = lineText[index];
-            var endIndex = lineText.IndexOf(endCharacter, index + 1);
-            var url = lineText.Substring(index + 1, endIndex - index - 1).Trim();
-            if (!url.Contains('/'))
-                continue;
-
-            if (url.StartsWith("/"))
-                url = Path.Combine(rootUrl, url);
-            else if (url.StartsWith("./"))
-                url = Path.Combine(rootUrl, url.Substring(2));
-            else if (url.StartsWith("../"))
-            {
-                var myRootPath = rootUrl;
-                while (url.StartsWith("../"))
-                {
-                    url = url.Substring(3);
-                    myRootPath = myRootPath.Substring(0, myRootPath.LastIndexOf('/'));
-                }
-                url = Path.Combine(myRootPath, url);
-            }
-            else if (!url.StartsWith("http:") && !url.StartsWith("https:"))
-                url = $"{rootUrl}/{url.TrimStart('/')}";
-            if (!outputUrls.Contains(url))
-                outputUrls.Add(url);
-        }
     }
     class TagRule
     {
